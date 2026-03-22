@@ -1,0 +1,32 @@
+research:
+  topic: "AI agent survey automation"
+  description: "Investigate tools, workflows, and constraints for automated survey systems."
+paths:
+  state_dir: "./state"
+  knowledge_dir: "./knowledge"
+  output_dir: "./outputs"
+  local_docs_dir: "./local_docs"
+ollama:
+  base_url: "http://localhost:11434"
+  planner_model: "planner"
+  extractor_model: "extractor"
+  synthesizer_model: "synthesizer"
+runtime:
+  max_steps_per_run: 3
+  max_retry_per_task: 2
+  max_tasks: 20
+  max_depth: 2
+  min_priority: 0.0
+  default_priority: 0.7
+collection:
+  max_web_results: 5
+  max_sources_per_task: 8
+  chunk_size: 1500
+  chunk_overlap: 200
+models:
+  planner_temperature: 0.2
+  extractor_temperature: 0.0
+  synthesizer_temperature: 0.3
+quality:
+  claim_confidence_threshold: 0.5
+  spawn_confidence_threshold: 0.6
