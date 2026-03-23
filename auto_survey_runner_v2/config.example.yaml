@@ -30,3 +30,7 @@ models:
 quality:
   claim_confidence_threshold: 0.5
   spawn_confidence_threshold: 0.6
+search:
+  brave_api_key: ""
+  country: "JP"
+  search_lang: "ja"

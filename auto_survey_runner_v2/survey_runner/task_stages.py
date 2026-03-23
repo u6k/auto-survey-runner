@@ -55,7 +55,7 @@ def collecting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     config = context["config"]
     logger = context["logger"]
     local_sources = load_local_documents(Path(config["paths"]["local_docs_dir"]), task.task_id)
-    web_sources = collect_web_documents(task.task_id, task.planned_queries, int(config["collection"]["max_web_results"]))
+    web_sources = collect_web_documents(task.task_id, task.planned_queries, int(config["collection"]["max_web_results"]), config, logger=logger)
     combined = local_sources + web_sources
     ranked = rank_sources(" ".join(task.planned_queries) or task.title, combined, int(config["collection"]["max_sources_per_task"]))
     logger.log_event(
@@ -144,7 +144,7 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
             "summary": "十分な source / claim を収集できなかったため、暫定サマリーのみを出力しました。",
             "key_findings": [],
             "open_questions": [
-                "DuckDuckGo 検索結果やローカル文書が取得できていない原因を確認する必要があります。",
+                "Brave Search API の検索結果やローカル文書が取得できていない原因を確認する必要があります。",
                 "対象トピックに対して利用可能な一次情報を追加収集する必要があります。",
             ],
         }
@@ -220,7 +220,7 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     if not claims:
         result = {
             "highlights": ["まだ統合対象となる知見は蓄積されていません。"],
-            "open_questions": ["検索結果やローカル文書が空だった原因調査が必要です。"],
+            "open_questions": ["Brave Search API の検索結果やローカル文書が空だった原因調査が必要です。"],
             "next_actions": ["利用可能な source を増やして再実行してください。"],
             "updated_at": utc_now_iso(),
         }
