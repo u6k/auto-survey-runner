@@ -44,6 +44,30 @@ class OllamaClient:
         except (HTTPError, URLError) as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
+    def _log_ollama_request(self, payload: dict[str, Any], log_context: dict[str, Any] | None = None) -> None:
+        """Log the full request payload sent to the Ollama HTTP API."""
+        if self.logger is None:
+            return
+        self.logger.log_event(
+            "ollama_http_request",
+            message=f"Sending raw Ollama request to model {payload.get('model', 'unknown')}",
+            task_id=(log_context or {}).get("task_id"),
+            stage=(log_context or {}).get("stage"),
+            payload={"request_payload": payload},
+        )
+
+    def _log_ollama_response(self, response_payload: Any, log_context: dict[str, Any] | None = None, *, model: str | None = None) -> None:
+        """Log the full response payload returned by the Ollama HTTP API."""
+        if self.logger is None:
+            return
+        self.logger.log_event(
+            "ollama_http_response",
+            message=f"Received raw Ollama response from model {model or 'unknown'}",
+            task_id=(log_context or {}).get("task_id"),
+            stage=(log_context or {}).get("stage"),
+            payload={"response_payload": response_payload},
+        )
+
     def _parse_json_content(self, content: Any) -> tuple[str, dict[str, Any]]:
         """Parse structured output content, tolerating fenced or wrapped JSON."""
         if isinstance(content, dict):
@@ -75,6 +99,7 @@ class OllamaClient:
         user_prompt: str,
         schema: dict[str, Any],
         temperature: float,
+        log_context: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Retry structured output as plain text JSON when Ollama returns empty schema content."""
         fallback_prompt = (
@@ -82,17 +107,18 @@ class OllamaClient:
             "Return a valid JSON object that matches this schema exactly.\n"
             f"{json.dumps(schema, ensure_ascii=False)}"
         )
-        result = self._chat(
-            {
-                "model": model,
-                "stream": False,
-                "options": {"temperature": temperature},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": fallback_prompt},
-                ],
-            }
-        )
+        payload = {
+            "model": model,
+            "stream": False,
+            "options": {"temperature": temperature},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": fallback_prompt},
+            ],
+        }
+        self._log_ollama_request(payload, log_context)
+        result = self._chat(payload)
+        self._log_ollama_response(result, log_context, model=model)
         content = result.get("message", {}).get("content", "")
         return self._parse_json_content(content)
 
@@ -127,8 +153,12 @@ class OllamaClient:
             ],
         }
         raw_text = ""
+        raw_result: Any = None
         try:
+            self._log_ollama_request(payload, log_context)
             result = self._chat(payload)
+            raw_result = result
+            self._log_ollama_response(result, log_context, model=model)
             content = result.get("message", {}).get("content", "{}")
             try:
                 raw_text, parsed = self._parse_json_content(content)
@@ -149,6 +179,7 @@ class OllamaClient:
                     user_prompt=user_prompt,
                     schema=schema,
                     temperature=temperature,
+                    log_context=log_context,
                 )
             if self.logger is not None:
                 self.logger.log_llm_response(
@@ -166,7 +197,7 @@ class OllamaClient:
                     exc=exc,
                     task_id=(log_context or {}).get("task_id"),
                     stage=(log_context or {}).get("stage"),
-                    payload={"model": model, "temperature": temperature, "raw_response_text": raw_text},
+                    payload={"model": model, "temperature": temperature, "raw_response_text": raw_text, "raw_response_payload": raw_result},
                 )
             raise
 
@@ -199,7 +230,9 @@ class OllamaClient:
             ],
         }
         try:
+            self._log_ollama_request(payload, log_context)
             result = self._chat(payload)
+            self._log_ollama_response(result, log_context, model=model)
             response_text = result.get("message", {}).get("content", "")
             if self.logger is not None:
                 self.logger.log_llm_response(
