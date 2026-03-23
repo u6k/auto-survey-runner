@@ -68,6 +68,34 @@ class OllamaClient:
                 return raw_text, json.loads(snippet)
             raise
 
+    def _chat_json_with_prompt_fallback(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: dict[str, Any],
+        temperature: float,
+    ) -> tuple[str, dict[str, Any]]:
+        """Retry structured output as plain text JSON when Ollama returns empty schema content."""
+        fallback_prompt = (
+            f"{user_prompt}\n\n"
+            "Return a valid JSON object that matches this schema exactly.\n"
+            f"{json.dumps(schema, ensure_ascii=False)}"
+        )
+        result = self._chat(
+            {
+                "model": model,
+                "stream": False,
+                "options": {"temperature": temperature},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": fallback_prompt},
+                ],
+            }
+        )
+        content = result.get("message", {}).get("content", "")
+        return self._parse_json_content(content)
+
     def chat_json(
         self,
         model: str,
@@ -102,7 +130,26 @@ class OllamaClient:
         try:
             result = self._chat(payload)
             content = result.get("message", {}).get("content", "{}")
-            raw_text, parsed = self._parse_json_content(content)
+            try:
+                raw_text, parsed = self._parse_json_content(content)
+            except ValueError as exc:
+                if "empty content" not in str(exc).lower() and "null content" not in str(exc).lower():
+                    raise
+                if self.logger is not None:
+                    self.logger.log_event(
+                        "llm_structured_output_fallback",
+                        message="Retrying JSON call without Ollama schema mode after empty structured response",
+                        task_id=(log_context or {}).get("task_id"),
+                        stage=(log_context or {}).get("stage"),
+                        payload={"model": model},
+                    )
+                raw_text, parsed = self._chat_json_with_prompt_fallback(
+                    model=model,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    schema=schema,
+                    temperature=temperature,
+                )
             if self.logger is not None:
                 self.logger.log_llm_response(
                     task_id=(log_context or {}).get("task_id"),

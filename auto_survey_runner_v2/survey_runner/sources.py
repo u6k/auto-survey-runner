@@ -23,6 +23,26 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".html", ".htm"}
 BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
 
+def clean_source_content(content: str, mime_type: str) -> str:
+    """Normalize fetched source content into LLM-friendly plain text."""
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    looks_like_html = "html" in mime_type.lower() or "<html" in normalized.lower() or "<body" in normalized.lower()
+    if looks_like_html:
+        normalized = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", normalized)
+        normalized = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", normalized)
+        normalized = re.sub(r"(?is)<!--.*?-->", " ", normalized)
+        normalized = re.sub(r"(?i)<br\s*/?>", "\n", normalized)
+        normalized = re.sub(r"(?i)</p\s*>", "\n\n", normalized)
+        normalized = re.sub(r"(?i)</div\s*>", "\n", normalized)
+        normalized = re.sub(r"(?i)</li\s*>", "\n", normalized)
+        normalized = re.sub(r"(?i)<li\s*>", "- ", normalized)
+        normalized = re.sub(r"(?s)<[^>]+>", " ", normalized)
+    normalized = normalized.replace("\xa0", " ")
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
 def load_local_documents(local_docs_dir: Path, task_id: str) -> list[SourceDoc]:
     """Load supported local documents from disk."""
     sources: list[SourceDoc] = []
@@ -31,7 +51,8 @@ def load_local_documents(local_docs_dir: Path, task_id: str) -> list[SourceDoc]:
     for path in local_docs_dir.iterdir():
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.is_file():
             continue
-        content = path.read_text(encoding="utf-8", errors="ignore")
+        raw_content = path.read_text(encoding="utf-8", errors="ignore")
+        content = clean_source_content(raw_content, "text/html" if path.suffix.lower() in {".html", ".htm"} else "text/plain")
         source_id = hashlib.sha1(f"{task_id}:{path.resolve()}".encode()).hexdigest()[:12]
         sources.append(
             SourceDoc(
@@ -232,11 +253,12 @@ def collect_web_documents(task_id: str, queries: list[str], max_results: int, co
                     )
                 continue
             source_id = hashlib.sha1(f"{task_id}:{url}".encode()).hexdigest()[:12]
+            cleaned_content = clean_source_content(content, mime_type)
             merged_content = result.get("snippet", "")
-            if merged_content and content:
-                merged_content = f"{result['title']}\n{merged_content}\n\n{content}"
+            if merged_content and cleaned_content:
+                merged_content = f"{result['title']}\n{merged_content}\n\n{cleaned_content}"
             else:
-                merged_content = content or merged_content
+                merged_content = cleaned_content or merged_content
             sources.append(
                 SourceDoc(
                     source_id=source_id,

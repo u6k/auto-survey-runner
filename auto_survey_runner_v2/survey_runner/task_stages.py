@@ -25,6 +25,22 @@ from .utils import read_json, write_json
 STAGE_ORDER = ["planning", "collecting", "extracting", "summarizing", "spawning", "integrating", "snapshotting", "done"]
 
 
+def _build_extraction_prompt(source: dict[str, Any]) -> str:
+    """Build a compact extraction prompt that avoids flooding the model with raw HTML noise."""
+    content = str(source.get("content", "")).strip()
+    if not content:
+        return ""
+    compact_content = "\n".join(line.strip() for line in content.splitlines() if line.strip())
+    compact_content = compact_content[:6000]
+    return (
+        f"Source title: {source['title']}\n"
+        f"Source URL: {source.get('uri', '')}\n"
+        "Extract only factual claims that are explicitly supported by the source text below. "
+        "Ignore navigation text, boilerplate, scripts, markup artifacts, and duplicated fragments.\n\n"
+        f"Content:\n{compact_content}"
+    )
+
+
 # These stage functions are kept separate so the orchestrator can resume from any durable checkpoint
 # instead of restarting a task from scratch after interruption or failure.
 def planning_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
@@ -88,7 +104,9 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     extracted: list[Claim] = []
     threshold = float(config["quality"]["claim_confidence_threshold"])
     for source in source_rows:
-        user_prompt = f"Source title: {source['title']}\nContent:\n{source['content'][:8000]}"
+        user_prompt = _build_extraction_prompt(source)
+        if not user_prompt:
+            continue
         result = client.chat_json(
             model=config["ollama"]["extractor_model"],
             system_prompt=EXTRACTOR_SYSTEM_PROMPT,
@@ -101,7 +119,9 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
             confidence = float(item.get("confidence", 0.0))
             if confidence < threshold:
                 continue
-            text = item["text"].strip()
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
             normalized = normalize_claim_text(text)
             claim_id = hashlib.sha1(f"{task.task_id}:{source['source_id']}:{normalized}".encode()).hexdigest()[:12]
             extracted.append(
@@ -112,7 +132,7 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
                     text=text,
                     normalized_text=normalized,
                     confidence=confidence,
-                    evidence=item.get("evidence", ""),
+                    evidence=str(item.get("evidence", "")).strip(),
                 )
             )
     logger.log_event(
