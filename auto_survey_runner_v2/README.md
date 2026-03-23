@@ -27,6 +27,8 @@
 - `tasks.json`: 全 Task の永続化。
 - `queue.json`: 未完了タスクの単純 list。
 - `state/task_work/<task_id>/`: 段階ごとの中間生成物。
+- `state/logs/execution.jsonl`: 実行全体の構造化ログ。
+- `state/task_work/<task_id>/events.jsonl`: task 単位の構造化ログ。
 
 #### knowledge/
 
@@ -98,7 +100,7 @@ Task は少なくとも以下の情報を持ちます。
 7. `snapshotting`: 全体統合成果物を `outputs/` に出力。
 8. `done`: task 完了。
 
-各段階は中間ファイルが存在する場合に再計算を避けます。これにより中断後の再開時に不要な再実行が発生しません。
+各段階は中間ファイルが存在する場合に再計算を避けます。これにより中断後の再開時に不要な再実行が発生しません。さらに、各段階の開始・完了、LLM に送った prompt、LLM から返った生テキスト、例外発生時の traceback を JSONL ログに残します。
 
 ## 再開
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from .logger import ExecutionLogger
+
 from .models import Task, utc_now_iso
 from .ollama_client import OllamaClient
 from .state_store import StateStore
@@ -28,11 +30,13 @@ class Orchestrator:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.store = StateStore(config)
-        self.client = OllamaClient(config["ollama"]["base_url"])
+        self.logger = ExecutionLogger(self.store)
+        self.client = OllamaClient(config["ollama"]["base_url"], logger=self.logger)
 
     def init_workspace(self) -> None:
         """Initialize the workspace and root task."""
         self.store.ensure_layout()
+        self.logger.log_event("workspace_init", message="Ensured workspace layout")
         tasks = self.store.read_tasks()
         if tasks:
             return
@@ -48,6 +52,7 @@ class Orchestrator:
         )
         self.store.write_tasks([root_task])
         self.store.write_queue([root_task.task_id])
+        self.logger.log_event("root_task_created", message="Created root task", task_id=root_task.task_id, payload={"title": root_task.title})
         self.store.write_run_state(
             {
                 "status": "idle",
@@ -72,6 +77,7 @@ class Orchestrator:
     # Stages are executed one at a time so each stage can leave a durable file checkpoint.
     # This makes resumability and retry handling explicit and easy to inspect on disk.
     def _run_task(self, task: Task, tasks: list[Task], queue: list[str]) -> None:
+        self.logger.log_event("task_start", message="Starting task execution", task_id=task.task_id, payload={"current_stage": task.current_stage, "priority": task.priority})
         task.status = "running"
         task.updated_at = utc_now_iso()
         run_state = self.store.read_run_state()
@@ -94,14 +100,17 @@ class Orchestrator:
                 continue
             if STAGE_ORDER.index(stage_name) < STAGE_ORDER.index(task.current_stage):
                 continue
+            self.logger.log_event("stage_start", message=f"Starting stage {stage_name}", task_id=task.task_id, stage=stage_name)
             context = {
                 "config": self.config,
                 "client": self.client,
+                "logger": self.logger,
                 "store": self.store,
                 "task_work_dir": self.store.task_work_path(task.task_id),
                 "tasks": tasks,
             }
             result = stage_functions[stage_name](task, context)
+            self.logger.log_event("stage_complete", message=f"Completed stage {stage_name}", task_id=task.task_id, stage=stage_name, payload={"next_stage": STAGE_ORDER[STAGE_ORDER.index(stage_name) + 1]})
             if stage_name == "planning":
                 task.planned_queries = result.get("queries", [])
             elif stage_name == "collecting":
@@ -121,6 +130,7 @@ class Orchestrator:
             task.updated_at = utc_now_iso()
             self._persist_tasks(tasks)
 
+        self.logger.log_event("task_complete", message="Completed task execution", task_id=task.task_id, payload={"spawned_task_ids": task.spawned_task_ids})
         task.status = "completed"
         task.current_stage = "done"
         task.updated_at = utc_now_iso()
@@ -137,6 +147,7 @@ class Orchestrator:
     def run(self, steps: int | None = None) -> None:
         """Run or resume up to the requested number of tasks."""
         self.init_workspace()
+        self.logger.log_event("run_start", message="Starting orchestrator run", payload={"requested_steps": steps})
         limit = steps if steps is not None else int(self.config["runtime"]["max_steps_per_run"])
         processed = 0
         while processed < limit:
@@ -147,10 +158,12 @@ class Orchestrator:
             if not task:
                 run_state.update({"status": "completed", "current_task_id": None, "updated_at": utc_now_iso()})
                 self.store.write_run_state(run_state)
+                self.logger.log_event("run_complete", message="No queued tasks remain; marking run completed")
                 break
             try:
                 self._run_task(task, tasks, queue)
             except Exception as exc:
+                self.logger.log_exception(message="Task execution failed", exc=exc, task_id=task.task_id, stage=task.current_stage, payload={"retry_count_before_increment": task.retry_count})
                 task.error_message = str(exc)
                 task.retry_count += 1
                 retryable = task.retry_count < int(self.config["runtime"]["max_retry_per_task"])

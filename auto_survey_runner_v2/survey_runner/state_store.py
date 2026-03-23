@@ -1,4 +1,4 @@
-"""Persistent state management for run state, queue, tasks, and knowledge files."""
+"""Persistent state management for run state, queue, tasks, knowledge files, and execution logs."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ class StateStore:
         self.knowledge_dir = Path(config["paths"]["knowledge_dir"])
         self.output_dir = Path(config["paths"]["output_dir"])
         self.task_work_dir = self.state_dir / "task_work"
+        self.logs_dir = self.state_dir / "logs"
 
         self.run_state_path = self.state_dir / "run_state.json"
         self.tasks_path = self.state_dir / "tasks.json"
@@ -26,10 +27,11 @@ class StateStore:
         self.sources_path = self.knowledge_dir / "sources.jsonl"
         self.task_summaries_path = self.knowledge_dir / "task_summaries.jsonl"
         self.global_digest_path = self.knowledge_dir / "global_digest.json"
+        self.execution_log_path = self.logs_dir / "execution.jsonl"
 
     def ensure_layout(self) -> None:
         """Ensure required directories and baseline files exist."""
-        for path in [self.state_dir, self.knowledge_dir, self.output_dir, self.task_work_dir]:
+        for path in [self.state_dir, self.knowledge_dir, self.output_dir, self.task_work_dir, self.logs_dir]:
             ensure_dir(path)
         if not self.run_state_path.exists():
             self.write_run_state({"status": "idle", "current_task_id": None, "stats": {}, "root_task_id": None})
@@ -39,7 +41,7 @@ class StateStore:
             self.write_queue([])
         if not self.global_digest_path.exists():
             write_json(self.global_digest_path, {"highlights": [], "open_questions": [], "updated_at": None})
-        for path in [self.claims_path, self.sources_path, self.task_summaries_path]:
+        for path in [self.claims_path, self.sources_path, self.task_summaries_path, self.execution_log_path]:
             path.touch(exist_ok=True)
 
     def task_work_path(self, task_id: str) -> Path:
