@@ -157,9 +157,21 @@ class Orchestrator:
             run_state = self.store.read_run_state()
             task = self._find_resume_task(tasks, run_state, queue)
             if not task:
-                run_state.update({"status": "completed", "current_task_id": None, "updated_at": utc_now_iso()})
+                has_failed_tasks = any(existing_task.status == "failed" for existing_task in tasks)
+                run_state.update(
+                    {
+                        "status": "failed" if has_failed_tasks else "completed",
+                        "current_task_id": None,
+                        "updated_at": utc_now_iso(),
+                    }
+                )
                 self.store.write_run_state(run_state)
-                self.logger.log_event("run_complete", message="No queued tasks remain; marking run completed")
+                self.logger.log_event(
+                    "run_complete",
+                    message="No queued tasks remain; marking run finished",
+                    level="ERROR" if has_failed_tasks else "INFO",
+                    payload={"has_failed_tasks": has_failed_tasks},
+                )
                 break
             try:
                 self._run_task(task, tasks, queue)

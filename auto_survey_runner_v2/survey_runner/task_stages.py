@@ -94,6 +94,7 @@ def collecting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
 def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract claims from collected sources."""
     path = context["task_work_dir"] / "claims.json"
+    meta_path = context["task_work_dir"] / "extraction_meta.json"
     if path.exists():
         return read_json(path, [])
     config = context["config"]
@@ -102,19 +103,37 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     store = context["store"]
     source_rows = read_json(context["task_work_dir"] / "collected_sources.json", [])
     extracted: list[Claim] = []
+    failures: list[dict[str, str]] = []
     threshold = float(config["quality"]["claim_confidence_threshold"])
     for source in source_rows:
         user_prompt = _build_extraction_prompt(source)
         if not user_prompt:
             continue
-        result = client.chat_json(
-            model=config["ollama"]["extractor_model"],
-            system_prompt=EXTRACTOR_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            schema=CLAIM_EXTRACTION_SCHEMA,
-            temperature=float(config["models"]["extractor_temperature"]),
-            log_context={"task_id": task.task_id, "stage": "extracting"},
-        )
+        try:
+            result = client.chat_json(
+                model=config["ollama"]["extractor_model"],
+                system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                schema=CLAIM_EXTRACTION_SCHEMA,
+                temperature=float(config["models"]["extractor_temperature"]),
+                log_context={"task_id": task.task_id, "stage": "extracting"},
+            )
+        except Exception as exc:
+            failures.append(
+                {
+                    "source_id": str(source.get("source_id", "")),
+                    "title": str(source.get("title", "")),
+                    "error_message": str(exc),
+                }
+            )
+            logger.log_exception(
+                message="Claim extraction failed for source; continuing with remaining sources",
+                exc=exc,
+                task_id=task.task_id,
+                stage="extracting",
+                payload={"source_id": source.get("source_id"), "source_title": source.get("title"), "source_uri": source.get("uri")},
+            )
+            continue
         for item in result.get("claims", []):
             confidence = float(item.get("confidence", 0.0))
             if confidence < threshold:
@@ -140,7 +159,16 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
         message="Extracted claims from sources",
         task_id=task.task_id,
         stage="extracting",
-        payload={"source_count": len(source_rows), "claim_count": len(extracted)},
+        payload={"source_count": len(source_rows), "claim_count": len(extracted), "failed_source_count": len(failures)},
+    )
+    write_json(
+        meta_path,
+        {
+            "source_count": len(source_rows),
+            "claim_count": len(extracted),
+            "failed_source_count": len(failures),
+            "failures": failures,
+        },
     )
     store.append_claims(extracted)
     serialized = [claim.to_dict() for claim in extracted]
@@ -157,23 +185,35 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     client = context["client"]
     logger = context["logger"]
     claims = read_json(context["task_work_dir"] / "claims.json", [])
+    extraction_meta = read_json(context["task_work_dir"] / "extraction_meta.json", {})
     if not claims:
+        failed_source_count = int(extraction_meta.get("failed_source_count", 0))
+        source_count = int(extraction_meta.get("source_count", 0))
+        if failed_source_count:
+            summary_text = "extractor の応答が不安定で claim を構造化抽出できなかったため、暫定サマリーのみを出力しました。"
+            open_questions = [
+                "Ollama extractor モデルが空応答を返した原因（モデル容量・負荷・structured output 対応）を確認する必要があります。",
+                f"抽出対象 {source_count} 件のうち {failed_source_count} 件で抽出エラーが発生しており、source 自体は取得できていても claim 化に失敗しています。",
+            ]
+        else:
+            summary_text = "十分な source / claim を収集できなかったため、暫定サマリーのみを出力しました。"
+            open_questions = [
+                "Brave Search API の検索結果やローカル文書が取得できていない原因を確認する必要があります。",
+                "対象トピックに対して利用可能な一次情報を追加収集する必要があります。",
+            ]
         summary_row = {
             "task_id": task.task_id,
             "task_title": task.title,
-            "summary": "十分な source / claim を収集できなかったため、暫定サマリーのみを出力しました。",
+            "summary": summary_text,
             "key_findings": [],
-            "open_questions": [
-                "Brave Search API の検索結果やローカル文書が取得できていない原因を確認する必要があります。",
-                "対象トピックに対して利用可能な一次情報を追加収集する必要があります。",
-            ],
+            "open_questions": open_questions,
         }
         logger.log_event(
             "task_summary_fallback",
             message="Generated fallback summary because no claims were available",
             task_id=task.task_id,
             stage="summarizing",
-            payload={"claim_count": 0},
+            payload={"claim_count": 0, "failed_source_count": failed_source_count},
         )
         context["store"].append_task_summary(summary_row)
         write_json(path, summary_row)
@@ -237,11 +277,21 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     logger = context["logger"]
     task_summaries = context["store"].read_task_summaries()
     claims = context["store"].read_claims()
+    extraction_meta = read_json(context["task_work_dir"] / "extraction_meta.json", {})
     if not claims:
+        failed_source_count = int(extraction_meta.get("failed_source_count", 0))
         result = {
             "highlights": ["まだ統合対象となる知見は蓄積されていません。"],
-            "open_questions": ["Brave Search API の検索結果やローカル文書が空だった原因調査が必要です。"],
-            "next_actions": ["利用可能な source を増やして再実行してください。"],
+            "open_questions": [
+                "抽出モデルが空応答を返して claim 化に失敗していないか確認が必要です。"
+                if failed_source_count
+                else "Brave Search API の検索結果やローカル文書が空だった原因調査が必要です。"
+            ],
+            "next_actions": [
+                "extractor モデルやタイムアウト設定を見直し、必要ならより小さい入力で再実行してください。"
+                if failed_source_count
+                else "利用可能な source を増やして再実行してください。"
+            ],
             "updated_at": utc_now_iso(),
         }
         logger.log_event(
@@ -249,6 +299,7 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
             message="Generated fallback global digest because no claims were available",
             task_id=task.task_id,
             stage="integrating",
+            payload={"failed_source_count": failed_source_count},
         )
         context["store"].write_global_digest(result)
         write_json(path, result)
