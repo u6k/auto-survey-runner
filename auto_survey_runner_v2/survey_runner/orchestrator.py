@@ -31,7 +31,7 @@ class Orchestrator:
         self.config = config
         self.store = StateStore(config)
         self.logger = ExecutionLogger(self.store)
-        self.client = OllamaClient(config["ollama"]["base_url"], logger=self.logger)
+        self.client = OllamaClient(config["ollama"]["base_url"], timeout=int(config.get("ollama", {}).get("timeout_seconds", 300)), logger=self.logger)
 
     def init_workspace(self) -> None:
         """Initialize the workspace and root task."""

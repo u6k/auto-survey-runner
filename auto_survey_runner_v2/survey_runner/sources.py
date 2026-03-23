@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib import parse, request
@@ -96,45 +97,89 @@ def resolve_brave_api_key(config: dict[str, Any]) -> str | None:
     return search_config.get("brave_api_key") or os.getenv("BRAVE_SEARCH_API_KEY")
 
 
-def brave_search(query: str, max_results: int, config: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_brave_params(query: str, max_results: int, config: dict[str, Any], *, include_locale: bool) -> dict[str, Any]:
+    search_config = config.get("search", {}) if isinstance(config.get("search", {}), dict) else {}
+    params: dict[str, Any] = {"q": query, "count": min(max_results, 20)}
+    if include_locale:
+        country = search_config.get("country")
+        search_lang = search_config.get("search_lang")
+        if country:
+            params["country"] = str(country).upper()
+        if search_lang:
+            params["search_lang"] = search_lang
+        if search_config.get("extra_snippets", True):
+            params["extra_snippets"] = "true"
+    return params
+
+
+def brave_search(query: str, max_results: int, config: dict[str, Any], logger: Any | None = None, task_id: str | None = None) -> list[dict[str, Any]]:
     """Call the Brave Search Web API and return normalized result rows."""
     api_key = resolve_brave_api_key(config)
     if not api_key:
         raise RuntimeError("Brave Search API key is not configured. Set search.brave_api_key or BRAVE_SEARCH_API_KEY.")
 
     search_config = config.get("search", {}) if isinstance(config.get("search", {}), dict) else {}
-    params = {
-        "q": query,
-        "count": min(max_results, 20),
-        "search_lang": search_config.get("search_lang", "ja"),
-        "country": search_config.get("country", "JP"),
-        "extra_snippets": "true",
-    }
-    payload = _http_get_json(
-        BRAVE_SEARCH_ENDPOINT,
-        params=params,
-        timeout=30,
-        headers={
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip",
-            "X-Subscription-Token": api_key,
-            "User-Agent": "auto-survey-runner/2.0",
-        },
-    )
-    results = []
-    for item in payload.get("web", {}).get("results", [])[:max_results]:
-        snippets = []
-        if item.get("description"):
-            snippets.append(item["description"])
-        snippets.extend(item.get("extra_snippets", []) or [])
-        results.append(
-            {
-                "url": item.get("url", ""),
-                "title": item.get("title") or item.get("url", ""),
-                "snippet": "\n".join(snippets).strip(),
-            }
-        )
-    return results
+    attempts = int(search_config.get("retry_attempts", 2))
+    retry_delay = float(search_config.get("retry_delay_seconds", 1.0))
+    last_exc: Exception | None = None
+
+    for include_locale in (True, False):
+        params = _build_brave_params(query, max_results, config, include_locale=include_locale)
+        for attempt in range(attempts + 1):
+            try:
+                payload = _http_get_json(
+                    BRAVE_SEARCH_ENDPOINT,
+                    params=params,
+                    timeout=30,
+                    headers={
+                        "Accept": "application/json",
+                        "Accept-Encoding": "gzip",
+                        "X-Subscription-Token": api_key,
+                        "User-Agent": "auto-survey-runner/2.0",
+                    },
+                )
+                results = []
+                for item in payload.get("web", {}).get("results", [])[:max_results]:
+                    snippets = []
+                    if item.get("description"):
+                        snippets.append(item["description"])
+                    snippets.extend(item.get("extra_snippets", []) or [])
+                    results.append(
+                        {
+                            "url": item.get("url", ""),
+                            "title": item.get("title") or item.get("url", ""),
+                            "snippet": "\n".join(snippets).strip(),
+                        }
+                    )
+                return results
+            except Exception as exc:
+                last_exc = exc
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code == 422 and include_locale:
+                    if logger is not None:
+                        logger.log_event(
+                            "brave_search_retry_without_locale",
+                            message="Retrying Brave Search query without locale-specific parameters after 422",
+                            task_id=task_id,
+                            stage="collecting",
+                            payload={"query": query, "attempt": attempt + 1},
+                        )
+                    break
+                if status_code == 429 and attempt < attempts:
+                    if logger is not None:
+                        logger.log_event(
+                            "brave_search_rate_limit",
+                            message="Brave Search rate limited; backing off before retry",
+                            task_id=task_id,
+                            stage="collecting",
+                            payload={"query": query, "attempt": attempt + 1, "retry_delay_seconds": retry_delay},
+                        )
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                raise
+    if last_exc is not None:
+        raise last_exc
+    return []
 
 
 def fetch_url(url: str) -> tuple[str, str]:
@@ -146,9 +191,11 @@ def collect_web_documents(task_id: str, queries: list[str], max_results: int, co
     """Collect web documents for a set of queries via Brave Search API."""
     sources: list[SourceDoc] = []
     seen_urls: set[str] = set()
-    for query in queries:
+    search_config = config.get("search", {}) if isinstance(config.get("search", {}), dict) else {}
+    max_queries = int(search_config.get("max_queries_per_task", 3))
+    for query in queries[:max_queries]:
         try:
-            results = brave_search(query, max_results=max_results, config=config)
+            results = brave_search(query, max_results=max_results, config=config, logger=logger, task_id=task_id)
             if logger is not None:
                 logger.log_event(
                     "web_search_query",
