@@ -12,6 +12,7 @@ ollama:
   extractor_model: "extractor"
   synthesizer_model: "synthesizer"
   timeout_seconds: 1800
+  extractor_disable_thinking: true
 runtime:
   max_steps_per_run: 3
   max_retry_per_task: 2

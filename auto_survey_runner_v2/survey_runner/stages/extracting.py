@@ -94,6 +94,7 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     extracted: list[Claim] = []
     failures: list[dict[str, str]] = []
     threshold = float(config["quality"]["claim_confidence_threshold"])
+    extractor_extra_options = {"think": False} if bool(config["ollama"].get("extractor_disable_thinking", True)) else {}
 
     for source in source_rows:
         user_prompt = _build_extraction_prompt(task, source)
@@ -107,6 +108,7 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
                 schema=CLAIM_EXTRACTION_SCHEMA,
                 temperature=float(config["models"]["extractor_temperature"]),
                 log_context={"task_id": task.task_id, "stage": "extracting"},
+                extra_options=extractor_extra_options,
             )
         except Exception as exc:
             failures.append(

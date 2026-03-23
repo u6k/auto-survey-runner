@@ -100,6 +100,7 @@ class OllamaClient:
         schema: dict[str, Any],
         temperature: float,
         log_context: dict[str, Any] | None = None,
+        extra_options: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Retry structured output as plain text JSON when Ollama returns empty schema content."""
         fallback_prompt = (
@@ -110,7 +111,7 @@ class OllamaClient:
         payload = {
             "model": model,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, **(extra_options or {})},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": fallback_prompt},
@@ -130,6 +131,7 @@ class OllamaClient:
         schema: dict[str, Any],
         temperature: float,
         log_context: dict[str, Any] | None = None,
+        extra_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Call Ollama chat with JSON schema structured output enabled."""
         if self.logger is not None:
@@ -146,7 +148,7 @@ class OllamaClient:
             "model": model,
             "format": schema,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, **(extra_options or {})},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -180,6 +182,7 @@ class OllamaClient:
                     schema=schema,
                     temperature=temperature,
                     log_context=log_context,
+                    extra_options=extra_options,
                 )
             if self.logger is not None:
                 self.logger.log_llm_response(
