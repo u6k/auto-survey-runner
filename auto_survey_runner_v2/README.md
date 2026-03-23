@@ -67,6 +67,7 @@ Task は少なくとも以下の情報を持ちます。
 - 直近更新日時
 - 実行済み / 失敗数などの統計
 - ルート task ID
+- 直近エラーの概要 (`last_error_message`)
 
 ## 知識仕様
 
@@ -105,7 +106,7 @@ Task は少なくとも以下の情報を持ちます。
 
 ## 再試行
 
-task が失敗した場合、`retry_count < max_retry_per_task` なら queue に戻して再試行します。上限を超えた task は `failed` のまま残り、run 全体の統計にも反映されます。
+task が失敗した場合、`retry_count < max_retry_per_task` なら queue に戻して再試行します。このとき run 全体は即座に終了扱いにせず、`run_state.json` は `idle` に戻り、`last_error_message` に原因を残します。上限を超えた task は `failed` のまま残り、run 全体の統計にも反映されます。
 
 ## 実手順
 

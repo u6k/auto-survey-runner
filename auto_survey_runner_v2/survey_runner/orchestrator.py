@@ -153,21 +153,26 @@ class Orchestrator:
             except Exception as exc:
                 task.error_message = str(exc)
                 task.retry_count += 1
-                task.status = "pending" if task.retry_count < int(self.config["runtime"]["max_retry_per_task"]) else "failed"
+                retryable = task.retry_count < int(self.config["runtime"]["max_retry_per_task"])
+                task.status = "pending" if retryable else "failed"
                 task.updated_at = utc_now_iso()
-                if task.status == "failed" and task.task_id in queue:
+                if retryable:
+                    if task.task_id not in queue:
+                        queue.append(task.task_id)
+                elif task.task_id in queue:
                     queue.remove(task.task_id)
-                elif task.task_id not in queue:
-                    queue.append(task.task_id)
                 self.store.write_queue(queue)
                 self._persist_tasks(tasks)
                 run_state = self.store.read_run_state()
-                run_state["status"] = "failed"
-                run_state["current_task_id"] = None
                 run_state.setdefault("stats", {})
-                if task.status == "failed":
-                    run_state["stats"]["failed_tasks"] = run_state["stats"].get("failed_tasks", 0) + 1
+                run_state["current_task_id"] = None
+                run_state["last_error_message"] = str(exc)
                 run_state["updated_at"] = utc_now_iso()
+                if retryable:
+                    run_state["status"] = "idle"
+                else:
+                    run_state["stats"]["failed_tasks"] = run_state["stats"].get("failed_tasks", 0) + 1
+                    run_state["status"] = "failed" if not queue else "idle"
                 self.store.write_run_state(run_state)
             processed += 1
 
