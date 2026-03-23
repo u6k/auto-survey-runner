@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import re
 import time
@@ -25,7 +26,7 @@ BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
 def clean_source_content(content: str, mime_type: str) -> str:
     """Normalize fetched source content into LLM-friendly plain text."""
-    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = html.unescape(content).replace("\r\n", "\n").replace("\r", "\n")
     looks_like_html = "html" in mime_type.lower() or "<html" in normalized.lower() or "<body" in normalized.lower()
     if looks_like_html:
         normalized = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", normalized)
@@ -254,7 +255,8 @@ def collect_web_documents(task_id: str, queries: list[str], max_results: int, co
                 continue
             source_id = hashlib.sha1(f"{task_id}:{url}".encode()).hexdigest()[:12]
             cleaned_content = clean_source_content(content, mime_type)
-            merged_content = result.get("snippet", "")
+            cleaned_snippet = clean_source_content(html.unescape(result.get("snippet", "")), "text/html")
+            merged_content = cleaned_snippet
             if merged_content and cleaned_content:
                 merged_content = f"{result['title']}\n{merged_content}\n\n{cleaned_content}"
             else:
