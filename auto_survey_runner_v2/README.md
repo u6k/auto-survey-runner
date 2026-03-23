@@ -94,7 +94,7 @@ Task は少なくとも以下の情報を持ちます。
 1. `planning`: planner が検索計画とサブトピック候補を生成。
 2. `collecting`: ローカル文書と Web 文書を収集・ランキング。
 3. `extracting`: extractor が structured output で claim を抽出。
-4. `summarizing`: task 単位の要約を生成。
+4. `summarizing`: task 単位の要約を生成。source / claim が空の場合は LLM を呼ばずにフォールバック要約を作る。
 5. `spawning`: 条件付きで派生 task を queue へ追加。
 6. `integrating`: global digest を更新。
 7. `snapshotting`: 全体統合成果物を `outputs/` に出力。
@@ -131,7 +131,7 @@ task が失敗した場合、`retry_count < max_retry_per_task` なら queue に
 ## 制約
 
 - PDF 未対応。
-- DuckDuckGo 検索と URL 取得はネットワーク状況に依存。
+- DuckDuckGo 検索と URL 取得はネットワーク状況に依存。source が空でもフォールバック成果物は出力されるが、内容は限定的になる。
 - ranking は簡易な語彙重なりベース。
 - structured output の品質は Ollama 側の schema 対応とモデル挙動に依存。
 

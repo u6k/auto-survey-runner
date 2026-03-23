@@ -140,6 +140,7 @@ class Orchestrator:
         run_state = self.store.read_run_state()
         run_state["current_task_id"] = None
         run_state["stats"]["completed_tasks"] = run_state.get("stats", {}).get("completed_tasks", 0) + 1
+        run_state["status"] = "completed" if not queue else "idle"
         run_state["updated_at"] = utc_now_iso()
         self.store.write_run_state(run_state)
         self._persist_tasks(tasks)

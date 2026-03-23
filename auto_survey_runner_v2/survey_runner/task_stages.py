@@ -34,7 +34,6 @@ def planning_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
         return read_json(path, {})
     config = context["config"]
     client = context["client"]
-    logger = context["logger"]
     user_prompt = f"Task: {task.title}\nDescription: {task.description}"
     result = client.chat_json(
         model=config["ollama"]["planner_model"],
@@ -59,7 +58,17 @@ def collecting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     web_sources = collect_web_documents(task.task_id, task.planned_queries, int(config["collection"]["max_web_results"]))
     combined = local_sources + web_sources
     ranked = rank_sources(" ".join(task.planned_queries) or task.title, combined, int(config["collection"]["max_sources_per_task"]))
-    logger.log_event("source_collection", message="Collected and ranked sources", task_id=task.task_id, stage="collecting", payload={"local_source_count": len(local_sources), "web_source_count": len(web_sources), "ranked_source_count": len(ranked)})
+    logger.log_event(
+        "source_collection",
+        message="Collected and ranked sources",
+        task_id=task.task_id,
+        stage="collecting",
+        payload={
+            "local_source_count": len(local_sources),
+            "web_source_count": len(web_sources),
+            "ranked_source_count": len(ranked),
+        },
+    )
     context["store"].append_sources(ranked)
     serialized = [source.to_dict() for source in ranked]
     write_json(path, serialized)
@@ -106,7 +115,13 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
                     evidence=item.get("evidence", ""),
                 )
             )
-    logger.log_event("claim_extraction", message="Extracted claims from sources", task_id=task.task_id, stage="extracting", payload={"source_count": len(source_rows), "claim_count": len(extracted)})
+    logger.log_event(
+        "claim_extraction",
+        message="Extracted claims from sources",
+        task_id=task.task_id,
+        stage="extracting",
+        payload={"source_count": len(source_rows), "claim_count": len(extracted)},
+    )
     store.append_claims(extracted)
     serialized = [claim.to_dict() for claim in extracted]
     write_json(path, serialized)
@@ -122,7 +137,29 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     client = context["client"]
     logger = context["logger"]
     claims = read_json(context["task_work_dir"] / "claims.json", [])
-    user_prompt = "\n".join(claim["text"] for claim in claims[:100]) or task.description
+    if not claims:
+        summary_row = {
+            "task_id": task.task_id,
+            "task_title": task.title,
+            "summary": "十分な source / claim を収集できなかったため、暫定サマリーのみを出力しました。",
+            "key_findings": [],
+            "open_questions": [
+                "DuckDuckGo 検索結果やローカル文書が取得できていない原因を確認する必要があります。",
+                "対象トピックに対して利用可能な一次情報を追加収集する必要があります。",
+            ],
+        }
+        logger.log_event(
+            "task_summary_fallback",
+            message="Generated fallback summary because no claims were available",
+            task_id=task.task_id,
+            stage="summarizing",
+            payload={"claim_count": 0},
+        )
+        context["store"].append_task_summary(summary_row)
+        write_json(path, summary_row)
+        return summary_row
+
+    user_prompt = "\n".join(claim["text"] for claim in claims[:100])
     result = client.chat_json(
         model=config["ollama"]["synthesizer_model"],
         system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
@@ -136,7 +173,13 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
         "task_title": task.title,
         **result,
     }
-    logger.log_event("task_summary", message="Generated task summary", task_id=task.task_id, stage="summarizing", payload={"claim_count": len(claims), "summary_keys": sorted(summary_row.keys())})
+    logger.log_event(
+        "task_summary",
+        message="Generated task summary",
+        task_id=task.task_id,
+        stage="summarizing",
+        payload={"claim_count": len(claims), "summary_keys": sorted(summary_row.keys())},
+    )
     context["store"].append_task_summary(summary_row)
     write_json(path, summary_row)
     return summary_row
@@ -151,7 +194,13 @@ def spawning_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]]:
     planner_output = read_json(context["task_work_dir"] / "planning.json", {})
     derived = derive_tasks(task, planner_output, context["tasks"], context["config"])
     serialized = [child.to_dict() for child in derived]
-    logger.log_event("task_spawning", message="Evaluated derived tasks", task_id=task.task_id, stage="spawning", payload={"spawned_task_count": len(serialized)})
+    logger.log_event(
+        "task_spawning",
+        message="Evaluated derived tasks",
+        task_id=task.task_id,
+        stage="spawning",
+        payload={"spawned_task_count": len(serialized)},
+    )
     write_json(path, serialized)
     return serialized
 
@@ -168,6 +217,23 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     logger = context["logger"]
     task_summaries = context["store"].read_task_summaries()
     claims = context["store"].read_claims()
+    if not claims:
+        result = {
+            "highlights": ["まだ統合対象となる知見は蓄積されていません。"],
+            "open_questions": ["検索結果やローカル文書が空だった原因調査が必要です。"],
+            "next_actions": ["利用可能な source を増やして再実行してください。"],
+            "updated_at": utc_now_iso(),
+        }
+        logger.log_event(
+            "global_digest_fallback",
+            message="Generated fallback global digest because no claims were available",
+            task_id=task.task_id,
+            stage="integrating",
+        )
+        context["store"].write_global_digest(result)
+        write_json(path, result)
+        return result
+
     prompt_chunks = [summary.get("summary", "") for summary in task_summaries]
     prompt_chunks.extend(claim["text"] for claim in claims[:200])
     result = client.chat_json(
@@ -179,7 +245,13 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
         log_context={"task_id": task.task_id, "stage": "integrating"},
     )
     result["updated_at"] = utc_now_iso()
-    logger.log_event("global_digest", message="Updated global digest", task_id=task.task_id, stage="integrating", payload={"task_summary_count": len(task_summaries), "claim_count": len(claims)})
+    logger.log_event(
+        "global_digest",
+        message="Updated global digest",
+        task_id=task.task_id,
+        stage="integrating",
+        payload={"task_summary_count": len(task_summaries), "claim_count": len(claims)},
+    )
     context["store"].write_global_digest(result)
     write_json(path, result)
     return result

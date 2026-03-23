@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib import request
 from urllib.error import HTTPError, URLError
@@ -43,6 +44,30 @@ class OllamaClient:
         except (HTTPError, URLError) as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
+    def _parse_json_content(self, content: Any) -> tuple[str, dict[str, Any]]:
+        """Parse structured output content, tolerating fenced or wrapped JSON."""
+        if isinstance(content, dict):
+            return json.dumps(content, ensure_ascii=False), content
+        if content is None:
+            raise ValueError("Ollama returned null content for structured output")
+
+        raw_text = str(content)
+        candidate = raw_text.strip()
+        if not candidate:
+            raise ValueError("Ollama returned empty content for structured output")
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
+            candidate = re.sub(r"\s*```$", "", candidate)
+        try:
+            return raw_text, json.loads(candidate)
+        except json.JSONDecodeError:
+            start = candidate.find("{")
+            end = candidate.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                snippet = candidate[start : end + 1]
+                return raw_text, json.loads(snippet)
+            raise
+
     def chat_json(
         self,
         model: str,
@@ -73,15 +98,11 @@ class OllamaClient:
                 {"role": "user", "content": user_prompt},
             ],
         }
+        raw_text = ""
         try:
             result = self._chat(payload)
             content = result.get("message", {}).get("content", "{}")
-            if isinstance(content, dict):
-                parsed = content
-                raw_text = json.dumps(content, ensure_ascii=False)
-            else:
-                raw_text = content
-                parsed = json.loads(content)
+            raw_text, parsed = self._parse_json_content(content)
             if self.logger is not None:
                 self.logger.log_llm_response(
                     task_id=(log_context or {}).get("task_id"),
@@ -98,7 +119,7 @@ class OllamaClient:
                     exc=exc,
                     task_id=(log_context or {}).get("task_id"),
                     stage=(log_context or {}).get("stage"),
-                    payload={"model": model, "temperature": temperature},
+                    payload={"model": model, "temperature": temperature, "raw_response_text": raw_text},
                 )
             raise
 
