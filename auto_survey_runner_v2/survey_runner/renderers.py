@@ -23,21 +23,21 @@ def render_integrated_outputs(output_dir: Path, task: Task, global_digest: dict[
     write_json(folder / "integrated_report.json", report_json)
 
     md_lines = [
-        f"# Integrated Report ({task.title})",
+        f"# 統合レポート（{task.title}）",
         "",
-        "## Highlights",
+        "## ハイライト",
         *[f"- {line}" for line in global_digest.get("highlights", [])],
         "",
-        "## Open Questions",
+        "## 未解決の問い",
         *[f"- {line}" for line in global_digest.get("open_questions", [])],
         "",
-        "## Next Actions",
+        "## 次のアクション",
         *[f"- {line}" for line in global_digest.get("next_actions", [])],
         "",
-        "## Task Summaries",
+        "## タスク別サマリー",
     ]
     for summary in task_summaries:
-        md_lines.extend([f"### {summary.get('task_title', 'unknown')}", summary.get("summary", ""), ""])
+        md_lines.extend([f"### {summary.get('task_title', '不明なタスク')}", summary.get("summary", ""), ""])
     (folder / "integrated_report.md").write_text("\n".join(md_lines), encoding="utf-8")
 
     manifest = {

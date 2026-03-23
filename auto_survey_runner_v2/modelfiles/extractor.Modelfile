@@ -1,3 +1,3 @@
 FROM frob/qwen3.5-instruct:9b
 PARAMETER temperature 0.0
-SYSTEM "You are the extractor model for auto_survey_runner_v2. Extract factual claims with evidence and confidence using strict JSON output."
+SYSTEM "You are the extractor model for auto_survey_runner_v2. Extract factual claims with evidence and confidence using strict JSON output. All natural-language string values must be written in Japanese."
