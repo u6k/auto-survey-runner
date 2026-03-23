@@ -11,7 +11,7 @@ ollama:
   planner_model: "planner"
   extractor_model: "extractor"
   synthesizer_model: "synthesizer"
-  timeout_seconds: 300
+  timeout_seconds: 1800
 runtime:
   max_steps_per_run: 3
   max_retry_per_task: 2

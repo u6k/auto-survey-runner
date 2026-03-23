@@ -113,7 +113,7 @@ task が失敗した場合、`retry_count < max_retry_per_task` なら queue に
 ## 実手順
 
 1. `cp config.example.yaml config.yaml`
-2. `config.yaml` を編集し、必要なら `search.brave_api_key` または環境変数 `BRAVE_SEARCH_API_KEY` を設定する。Ollama が重い場合は `ollama.timeout_seconds` を引き上げる。
+2. `config.yaml` を編集し、必要なら `search.brave_api_key` または環境変数 `BRAVE_SEARCH_API_KEY` を設定する。Ollama の既定タイムアウトは 30 分 (`1800` 秒) です。必要に応じて `ollama.timeout_seconds` で調整できます。
 3. `python run.py init --config config.yaml`
 4. `python run.py run --config config.yaml --steps 1`
 5. 状態確認は `python run.py status --config config.yaml`
