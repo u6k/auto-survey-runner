@@ -11,7 +11,7 @@ from .models import Task, utc_now_iso
 from .ollama_client import OllamaClient
 from .state_store import StateStore
 from .task_generation import pick_next_task
-from .task_stages import (
+from .stages import (
     STAGE_ORDER,
     collecting_stage,
     extracting_stage,

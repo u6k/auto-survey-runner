@@ -11,6 +11,18 @@
 
 ## 設計概要
 
+### 実装モジュール構成
+
+- `survey_runner/orchestrator.py`: 各 stage を順番に呼び出し、queue / retry / run state を制御するメイン制御層。
+- `survey_runner/stages/`: `planning`, `collecting`, `extracting`, `summarizing`, `spawning`, `integrating`, `snapshotting` を stage ごとに分割した実装層。
+- `survey_runner/task_stages.py`: 旧 import パス互換の薄い re-export 層。
+- `survey_runner/sources.py`: source 収集・HTML 正規化・ランキング。
+- `survey_runner/ollama_client.py`: Ollama 呼び出しと structured output 処理。
+- `survey_runner/state_store.py`: 永続化 I/O の集約。
+- `survey_runner/renderers.py`: 外部共有向け成果物生成。
+
+stage ごとの詳細仕様は `docs/spec_*.md` を参照してください。
+
 ### ディレクトリ設計
 
 - `state/`: 実行状態、キュー、進行中タスク、タスク別ワークディレクトリ。
@@ -99,6 +111,18 @@ Task は少なくとも以下の情報を持ちます。
 6. `integrating`: global digest を更新。
 7. `snapshotting`: 全体統合成果物を `outputs/` に出力。
 8. `done`: task 完了。
+
+### 各処理ステップの仕様概要
+
+| ステップ | 概要 | 主な入力 | 主な出力 | 詳細仕様 |
+| --- | --- | --- | --- | --- |
+| planning | 調査テーマを query / subtasks に変換 | task title, description | `planning.json` | `docs/spec_planning.md` |
+| collecting | ローカル文書と Web 文書を収集・正規化・ランキング | query, local docs, Brave Search | `collected_sources.json` | `docs/spec_collecting.md` |
+| extracting | source から claim を構造化抽出 | collected sources | `claims.json`, `extraction_meta.json` | `docs/spec_extracting.md` |
+| summarizing | task 単位の summary を作成 | claims, extraction meta | `summary.json` | `docs/spec_summarizing.md` |
+| spawning | planner 候補から派生 task を確定 | planning result, existing tasks | `spawned_tasks.json` | `docs/spec_spawning.md` |
+| integrating | 累積 knowledge から global digest を更新 | task summaries, claims | `global_digest.json` | `docs/spec_integrating.md` |
+| snapshotting | 外部共有向け成果物を生成 | global digest, summaries, claims | `integrated_report.*` | `docs/spec_snapshotting.md` |
 
 各段階は中間ファイルが存在する場合に再計算を避けます。これにより中断後の再開時に不要な再実行が発生しません。さらに、各段階の開始・完了、LLM に送った prompt、LLM から返った生テキスト、例外発生時の traceback を JSONL ログに残します。
 
