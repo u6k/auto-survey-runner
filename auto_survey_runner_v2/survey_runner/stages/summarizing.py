@@ -72,11 +72,11 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
         + "\n".join(claim_lines)
     )
     result = client.chat_json(
-        model=config["ollama"]["synthesizer_model"],
+        model=config["llm"]["model_map"]["synthesizer"],
         system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         schema=TASK_SUMMARY_SCHEMA,
-        temperature=float(config["models"]["synthesizer_temperature"]),
+        temperature=float(config["llm"]["temperature"]["synthesizer"]),
         log_context={"task_id": task.task_id, "stage": "summarizing"},
     )
     summary_row = {"task_id": task.task_id, "task_title": task.title, **result}

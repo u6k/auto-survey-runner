@@ -17,7 +17,7 @@
 - `survey_runner/stages/`: `planning`, `collecting`, `extracting`, `summarizing`, `spawning`, `integrating`, `snapshotting` を stage ごとに分割した実装層。
 - `survey_runner/task_stages.py`: 旧 import パス互換の薄い re-export 層。
 - `survey_runner/sources.py`: source 収集・HTML 正規化・ランキング。
-- `survey_runner/ollama_client.py`: Ollama 呼び出しと structured output 処理。
+- `survey_runner/llm_client.py`: LiteLLM ベースの provider 非依存 LLM 呼び出しと structured output 処理。
 - `survey_runner/state_store.py`: 永続化 I/O の集約。
 - `survey_runner/renderers.py`: 外部共有向け成果物生成。
 
@@ -28,7 +28,7 @@ stage ごとの詳細仕様は `docs/spec_*.md` を参照してください。
 - `state/`: 実行状態、キュー、進行中タスク、タスク別ワークディレクトリ。
 - `knowledge/`: claim / source / summary / digest などの知識蓄積。
 - `outputs/`: Markdown / JSON の外部共有向け成果物。
-- `modelfiles/`: Ollama 用の役割別 Modelfile。
+- `modelfiles/`: Ollama 利用時の役割別 Modelfile（任意）。
 - `survey_runner/`: 実装本体。
 
 ### 状態 / 知識 / 成果物の分離
@@ -137,7 +137,7 @@ task が失敗した場合、`retry_count < max_retry_per_task` なら queue に
 ## 実手順
 
 1. `cp config.example.yaml config.yaml`
-2. `config.yaml` を編集し、必要なら `search.brave_api_key` または環境変数 `BRAVE_SEARCH_API_KEY` を設定する。Ollama の既定タイムアウトは 30 分 (`1800` 秒) です。必要に応じて `ollama.timeout_seconds` で調整できます。
+2. `config.yaml` を編集し、必要なら `search.brave_api_key` または環境変数 `BRAVE_SEARCH_API_KEY` を設定する。LLM の既定タイムアウトは 30 分 (`1800` 秒) です。必要に応じて `llm.timeout_seconds` で調整できます。
 3. `python run.py init --config config.yaml`
 4. `python run.py run --config config.yaml --steps 1`
 5. 状態確認は `python run.py status --config config.yaml`
@@ -150,14 +150,15 @@ task が失敗した場合、`retry_count < max_retry_per_task` なら queue に
 - Extractor: 収集文書から claim を構造化抽出。
 - Synthesizer: task summary と global digest を生成。
 
-3 つの Modelfile は同じベースモデル `qwen3.5:9b` を使いますが、温度と生成長、system prompt を分離しています。
+model は `llm.model_map`（planner/extractor/synthesizer）で役割ごとに分離して指定します。
 
 ## 制約
 
 - PDF 未対応。
 - Brave Search API と URL 取得はネットワーク状況と API key に依存。422 時は locale 指定を外して再試行し、429 時は backoff する。source が空でもフォールバック成果物は出力されるが、内容は限定的になる。
 - ranking は簡易な語彙重なりベース。
-- structured output の品質は Ollama 側の schema 対応とモデル挙動に依存。
+- structured output の品質は利用する provider/model の JSON schema 対応とモデル挙動に依存。
+- LLM プロバイダ切替（Ollama / OpenAI 等）の設計検討は `docs/spec_llm_provider_switching.md` を参照。
 
 ## 今後の改善候補
 

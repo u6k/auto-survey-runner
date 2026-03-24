@@ -7,8 +7,8 @@ from typing import Any
 
 from .logger import ExecutionLogger
 
+from .llm_client import create_llm_client
 from .models import Task, utc_now_iso
-from .ollama_client import OllamaClient
 from .state_store import StateStore
 from .task_generation import pick_next_task
 from .stages import (
@@ -31,7 +31,7 @@ class Orchestrator:
         self.config = config
         self.store = StateStore(config)
         self.logger = ExecutionLogger(self.store)
-        self.client = OllamaClient(config["ollama"]["base_url"], timeout=int(config.get("ollama", {}).get("timeout_seconds", 1800)), logger=self.logger)
+        self.client = create_llm_client(config, logger=self.logger)
 
     def init_workspace(self) -> None:
         """Initialize the workspace and root task."""

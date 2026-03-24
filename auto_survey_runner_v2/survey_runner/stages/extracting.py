@@ -94,7 +94,10 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
     extracted: list[Claim] = []
     failures: list[dict[str, str]] = []
     threshold = float(config["quality"]["claim_confidence_threshold"])
-    extractor_extra_options = {"think": False} if bool(config["ollama"].get("extractor_disable_thinking", True)) else {}
+    extractor_extra_options: dict[str, Any] = {}
+    if bool(config["llm"].get("extractor_disable_thinking", True)):
+        if str(config["llm"]["model_map"]["extractor"]).startswith("ollama/"):
+            extractor_extra_options = {"extra_body": {"options": {"think": False}}}
 
     for source in source_rows:
         user_prompt = _build_extraction_prompt(task, source)
@@ -102,11 +105,11 @@ def extracting_stage(task: Task, context: dict[str, Any]) -> list[dict[str, Any]
             continue
         try:
             result = client.chat_json(
-                model=config["ollama"]["extractor_model"],
+                model=config["llm"]["model_map"]["extractor"],
                 system_prompt=EXTRACTOR_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 schema=CLAIM_EXTRACTION_SCHEMA,
-                temperature=float(config["models"]["extractor_temperature"]),
+                temperature=float(config["llm"]["temperature"]["extractor"]),
                 log_context={"task_id": task.task_id, "stage": "extracting"},
                 extra_options=extractor_extra_options,
             )

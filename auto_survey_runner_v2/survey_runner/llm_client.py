@@ -1,84 +1,103 @@
-"""Small Ollama HTTP client wrapper for text and structured chat responses."""
+"""Provider-agnostic LLM client using LiteLLM."""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
-from urllib import request
-from urllib.error import HTTPError, URLError
+from typing import Any, Protocol
 
 try:
-    import requests  # type: ignore
+    import litellm  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - optional dependency.
-    requests = None
+    litellm = None
 
 
-class OllamaClient:
-    """Client for Ollama chat endpoints."""
+class BaseLlmClient(Protocol):
+    """Common LLM client interface consumed by pipeline stages."""
 
-    def __init__(self, base_url: str, timeout: int = 120, logger: Any | None = None) -> None:
-        self.base_url = base_url.rstrip("/")
+    def chat_json(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: dict[str, Any],
+        temperature: float,
+        log_context: dict[str, Any] | None = None,
+        extra_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Call chat completion and return parsed JSON."""
+
+    def chat_text(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        log_context: dict[str, Any] | None = None,
+    ) -> str:
+        """Call chat completion and return plain text."""
+
+
+class LiteLlmClient:
+    """Client for LiteLLM completion APIs."""
+
+    def __init__(self, timeout: int = 120, logger: Any | None = None) -> None:
+        if litellm is None:
+            raise RuntimeError("litellm is required. Install dependencies from requirements.txt.")
         self.timeout = timeout
         self.logger = logger
 
-    def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if requests is not None:
-            response = requests.post(
-                f"{self.base_url}/api/chat",
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            return response.json()
-
-        req = request.Request(
-            f"{self.base_url}/api/chat",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with request.urlopen(req, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError) as exc:
-            raise RuntimeError(f"Ollama request failed: {exc}") from exc
-
-    def _log_ollama_request(self, payload: dict[str, Any], log_context: dict[str, Any] | None = None) -> None:
-        """Log the full request payload sent to the Ollama HTTP API."""
+    def _log_raw_request(self, payload: dict[str, Any], log_context: dict[str, Any] | None = None) -> None:
         if self.logger is None:
             return
         self.logger.log_event(
-            "ollama_http_request",
-            message=f"Sending raw Ollama request to model {payload.get('model', 'unknown')}",
+            "llm_http_request",
+            message=f"Sending raw LLM request to model {payload.get('model', 'unknown')}",
             task_id=(log_context or {}).get("task_id"),
             stage=(log_context or {}).get("stage"),
             payload={"request_payload": payload},
         )
 
-    def _log_ollama_response(self, response_payload: Any, log_context: dict[str, Any] | None = None, *, model: str | None = None) -> None:
-        """Log the full response payload returned by the Ollama HTTP API."""
+    def _log_raw_response(self, payload: Any, log_context: dict[str, Any] | None = None, *, model: str | None = None) -> None:
         if self.logger is None:
             return
         self.logger.log_event(
-            "ollama_http_response",
-            message=f"Received raw Ollama response from model {model or 'unknown'}",
+            "llm_http_response",
+            message=f"Received raw LLM response from model {model or 'unknown'}",
             task_id=(log_context or {}).get("task_id"),
             stage=(log_context or {}).get("stage"),
-            payload={"response_payload": response_payload},
+            payload={"response_payload": payload},
         )
 
+    def _completion(self, payload: dict[str, Any]) -> Any:
+        assert litellm is not None
+        return litellm.completion(**payload)
+
+    def _extract_content(self, result: Any) -> str:
+        choices = getattr(result, "choices", None)
+        if choices is None and isinstance(result, dict):
+            choices = result.get("choices")
+        if not choices:
+            return ""
+        first = choices[0]
+        message = getattr(first, "message", None)
+        if message is None and isinstance(first, dict):
+            message = first.get("message", {})
+        content = getattr(message, "content", None)
+        if content is None and isinstance(message, dict):
+            content = message.get("content", "")
+        return "" if content is None else str(content)
+
     def _parse_json_content(self, content: Any) -> tuple[str, dict[str, Any]]:
-        """Parse structured output content, tolerating fenced or wrapped JSON."""
         if isinstance(content, dict):
             return json.dumps(content, ensure_ascii=False), content
         if content is None:
-            raise ValueError("Ollama returned null content for structured output")
+            raise ValueError("LLM returned null content for structured output")
 
         raw_text = str(content)
         candidate = raw_text.strip()
         if not candidate:
-            raise ValueError("Ollama returned empty content for structured output")
+            raise ValueError("LLM returned empty content for structured output")
         if candidate.startswith("```"):
             candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
             candidate = re.sub(r"\s*```$", "", candidate)
@@ -102,7 +121,6 @@ class OllamaClient:
         log_context: dict[str, Any] | None = None,
         extra_options: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Retry structured output as plain text JSON when Ollama returns empty schema content."""
         fallback_prompt = (
             f"{user_prompt}\n\n"
             "Return a valid JSON object that matches this schema exactly.\n"
@@ -110,18 +128,18 @@ class OllamaClient:
         )
         payload = {
             "model": model,
-            "stream": False,
-            "options": {"temperature": temperature, **(extra_options or {})},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": fallback_prompt},
             ],
+            "temperature": temperature,
+            "timeout": self.timeout,
+            **(extra_options or {}),
         }
-        self._log_ollama_request(payload, log_context)
-        result = self._chat(payload)
-        self._log_ollama_response(result, log_context, model=model)
-        content = result.get("message", {}).get("content", "")
-        return self._parse_json_content(content)
+        self._log_raw_request(payload, log_context)
+        result = self._completion(payload)
+        self._log_raw_response(result, log_context, model=model)
+        return self._parse_json_content(self._extract_content(result))
 
     def chat_json(
         self,
@@ -133,7 +151,7 @@ class OllamaClient:
         log_context: dict[str, Any] | None = None,
         extra_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Call Ollama chat with JSON schema structured output enabled."""
+        """Call completion with structured output and parse JSON."""
         if self.logger is not None:
             self.logger.log_llm_request(
                 task_id=(log_context or {}).get("task_id"),
@@ -146,22 +164,26 @@ class OllamaClient:
             )
         payload = {
             "model": model,
-            "format": schema,
-            "stream": False,
-            "options": {"temperature": temperature, **(extra_options or {})},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            "temperature": temperature,
+            "timeout": self.timeout,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": schema},
+            },
+            **(extra_options or {}),
         }
         raw_text = ""
         raw_result: Any = None
         try:
-            self._log_ollama_request(payload, log_context)
-            result = self._chat(payload)
+            self._log_raw_request(payload, log_context)
+            result = self._completion(payload)
             raw_result = result
-            self._log_ollama_response(result, log_context, model=model)
-            content = result.get("message", {}).get("content", "{}")
+            self._log_raw_response(result, log_context, model=model)
+            content = self._extract_content(result)
             try:
                 raw_text, parsed = self._parse_json_content(content)
             except ValueError as exc:
@@ -170,7 +192,7 @@ class OllamaClient:
                 if self.logger is not None:
                     self.logger.log_event(
                         "llm_structured_output_fallback",
-                        message="Retrying JSON call without Ollama schema mode after empty structured response",
+                        message="Retrying JSON call without schema mode after empty structured response",
                         task_id=(log_context or {}).get("task_id"),
                         stage=(log_context or {}).get("stage"),
                         payload={"model": model},
@@ -212,7 +234,7 @@ class OllamaClient:
         temperature: float,
         log_context: dict[str, Any] | None = None,
     ) -> str:
-        """Call Ollama chat and return plain text."""
+        """Call completion and return text content."""
         if self.logger is not None:
             self.logger.log_llm_request(
                 task_id=(log_context or {}).get("task_id"),
@@ -225,33 +247,32 @@ class OllamaClient:
             )
         payload = {
             "model": model,
-            "stream": False,
-            "options": {"temperature": temperature},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            "temperature": temperature,
+            "timeout": self.timeout,
         }
-        try:
-            self._log_ollama_request(payload, log_context)
-            result = self._chat(payload)
-            self._log_ollama_response(result, log_context, model=model)
-            response_text = result.get("message", {}).get("content", "")
-            if self.logger is not None:
-                self.logger.log_llm_response(
-                    task_id=(log_context or {}).get("task_id"),
-                    stage=(log_context or {}).get("stage"),
-                    model=model,
-                    response_text=response_text,
-                )
-            return response_text
-        except Exception as exc:
-            if self.logger is not None:
-                self.logger.log_exception(
-                    message=f"LLM text call failed for model {model}",
-                    exc=exc,
-                    task_id=(log_context or {}).get("task_id"),
-                    stage=(log_context or {}).get("stage"),
-                    payload={"model": model, "temperature": temperature},
-                )
-            raise
+        self._log_raw_request(payload, log_context)
+        result = self._completion(payload)
+        self._log_raw_response(result, log_context, model=model)
+        response_text = self._extract_content(result)
+        if self.logger is not None:
+            self.logger.log_llm_response(
+                task_id=(log_context or {}).get("task_id"),
+                stage=(log_context or {}).get("stage"),
+                model=model,
+                response_text=response_text,
+                parsed_payload=None,
+            )
+        return response_text
+
+
+def create_llm_client(config: dict[str, Any], logger: Any | None = None) -> BaseLlmClient:
+    """Create an LLM client from configuration."""
+    provider = str(config["llm"]["provider"]).strip().lower()
+    timeout = int(config["llm"].get("timeout_seconds", 1800))
+    if provider == "litellm":
+        return LiteLlmClient(timeout=timeout, logger=logger)
+    raise ValueError(f"Unsupported llm.provider: {provider}")

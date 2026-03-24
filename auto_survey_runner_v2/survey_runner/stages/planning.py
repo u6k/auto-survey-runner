@@ -23,11 +23,11 @@ def planning_stage(task: Any, context: dict[str, Any]) -> dict[str, Any]:
     client = context["client"]
     user_prompt = f"Task: {task.title}\nDescription: {task.description}"
     result = client.chat_json(
-        model=config["ollama"]["planner_model"],
+        model=config["llm"]["model_map"]["planner"],
         system_prompt=PLANNER_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         schema=QUERY_PLAN_SCHEMA,
-        temperature=float(config["models"]["planner_temperature"]),
+        temperature=float(config["llm"]["temperature"]["planner"]),
         log_context={"task_id": task.task_id, "stage": "planning"},
     )
     write_json(path, result)

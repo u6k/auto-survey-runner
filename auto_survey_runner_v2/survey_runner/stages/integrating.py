@@ -58,11 +58,11 @@ def integrating_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
     prompt_chunks = [summary.get("summary", "") for summary in task_summaries]
     prompt_chunks.extend(claim["text"] for claim in claims[:200])
     result = client.chat_json(
-        model=config["ollama"]["synthesizer_model"],
+        model=config["llm"]["model_map"]["synthesizer"],
         system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
         user_prompt="\n".join(prompt_chunks)[:12000],
         schema=GLOBAL_DIGEST_SCHEMA,
-        temperature=float(config["models"]["synthesizer_temperature"]),
+        temperature=float(config["llm"]["temperature"]["synthesizer"]),
         log_context={"task_id": task.task_id, "stage": "integrating"},
     )
     result["updated_at"] = utc_now_iso()
