@@ -9,6 +9,8 @@
   - `extracting` ステップで保存された claim の配列。
   - 通常経路では、このうち最大 100 件の `text` を連結して synthesizer への `user_prompt` を作る。
 - `extraction_meta.json`
+
+## 処理
   - claim 未取得時の原因判定に使うメタ情報。
   - 主に `source_count` と `failed_source_count` を参照し、フォールバック文面を分岐する。
 - 実行コンテキスト（内部入力）
