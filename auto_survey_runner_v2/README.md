@@ -158,6 +158,7 @@ task が失敗した場合、`retry_count < max_retry_per_task` なら queue に
 - Brave Search API と URL 取得はネットワーク状況と API key に依存。422 時は locale 指定を外して再試行し、429 時は backoff する。source が空でもフォールバック成果物は出力されるが、内容は限定的になる。
 - ranking は簡易な語彙重なりベース。
 - structured output の品質は Ollama 側の schema 対応とモデル挙動に依存。
+- LLM プロバイダ切替（Ollama / OpenAI 等）の設計検討は `docs/spec_llm_provider_switching.md` を参照。
 
 ## 今後の改善候補
 
