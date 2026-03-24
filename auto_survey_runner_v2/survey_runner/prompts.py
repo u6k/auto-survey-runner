@@ -51,6 +51,14 @@ TASK_SUMMARY_SCHEMA = {
     "required": ["summary", "key_findings", "open_questions"],
 }
 
+
+TASK_SUMMARY_BRIEFING_INSTRUCTION = (
+    "Create a comprehensive briefing document that synthesizes the main themes and ideas from the sources. "
+    "Start with a concise Executive Summary that presents the most critical takeaways upfront. "
+    "The body of the document must provide a detailed and thorough examination of the main themes, evidence, and conclusions found in the sources. "
+    "This analysis should be structured logically with headings and bullet points to ensure clarity. "
+    "The tone must be objective and incisive."
+)
 GLOBAL_DIGEST_SCHEMA = {
     "type": "object",
     "properties": {

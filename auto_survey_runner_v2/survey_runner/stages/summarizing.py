@@ -9,7 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import Task
-from ..prompts import SYNTHESIZER_SYSTEM_PROMPT, TASK_SUMMARY_SCHEMA
+from ..prompts import (
+    SYNTHESIZER_SYSTEM_PROMPT,
+    TASK_SUMMARY_BRIEFING_INSTRUCTION,
+    TASK_SUMMARY_SCHEMA,
+)
 from ..utils import read_json, write_json
 
 
@@ -57,7 +61,16 @@ def summarizing_stage(task: Task, context: dict[str, Any]) -> dict[str, Any]:
         write_json(path, summary_row)
         return summary_row
 
-    user_prompt = "\n".join(claim["text"] for claim in claims[:100])
+    claim_lines = [f"- {claim['text']}" for claim in claims[:100]]
+    user_prompt = (
+        f"{TASK_SUMMARY_BRIEFING_INSTRUCTION}\n\n"
+        "Use the claims below as source material and return valid JSON matching the schema.\n"
+        "- summary: include heading and bullet-point structure in Japanese prose.\n"
+        "- key_findings: provide concise bullet-ready findings in Japanese.\n"
+        "- open_questions: list unresolved items in Japanese.\n\n"
+        "Claims:\n"
+        + "\n".join(claim_lines)
+    )
     result = client.chat_json(
         model=config["ollama"]["synthesizer_model"],
         system_prompt=SYNTHESIZER_SYSTEM_PROMPT,
