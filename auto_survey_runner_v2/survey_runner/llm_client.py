@@ -47,6 +47,32 @@ class LiteLlmClient:
         self.timeout = timeout
         self.logger = logger
 
+    def _to_jsonable(self, value: Any) -> Any:
+        """Best-effort conversion for structured logging payloads."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): self._to_jsonable(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._to_jsonable(item) for item in value]
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            try:
+                return self._to_jsonable(model_dump())
+            except Exception:
+                pass
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            try:
+                return self._to_jsonable(to_dict())
+            except Exception:
+                pass
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except TypeError:
+            return repr(value)
+
     def _log_raw_request(self, payload: dict[str, Any], log_context: dict[str, Any] | None = None) -> None:
         if self.logger is None:
             return
@@ -55,7 +81,7 @@ class LiteLlmClient:
             message=f"Sending raw LLM request to model {payload.get('model', 'unknown')}",
             task_id=(log_context or {}).get("task_id"),
             stage=(log_context or {}).get("stage"),
-            payload={"request_payload": payload},
+            payload={"request_payload": self._to_jsonable(payload)},
         )
 
     def _log_raw_response(self, payload: Any, log_context: dict[str, Any] | None = None, *, model: str | None = None) -> None:
@@ -66,7 +92,7 @@ class LiteLlmClient:
             message=f"Received raw LLM response from model {model or 'unknown'}",
             task_id=(log_context or {}).get("task_id"),
             stage=(log_context or {}).get("stage"),
-            payload={"response_payload": payload},
+            payload={"response_payload": self._to_jsonable(payload)},
         )
 
     def _completion(self, payload: dict[str, Any]) -> Any:
@@ -222,7 +248,12 @@ class LiteLlmClient:
                     exc=exc,
                     task_id=(log_context or {}).get("task_id"),
                     stage=(log_context or {}).get("stage"),
-                    payload={"model": model, "temperature": temperature, "raw_response_text": raw_text, "raw_response_payload": raw_result},
+                    payload={
+                        "model": model,
+                        "temperature": temperature,
+                        "raw_response_text": raw_text,
+                        "raw_response_payload": self._to_jsonable(raw_result),
+                    },
                 )
             raise
 
