@@ -5,7 +5,7 @@ __all__ = [
     "models",
     "state_store",
     "logger",
-    "ollama_client",
+    "llm_client",
     "prompts",
     "sources",
     "dedupe",

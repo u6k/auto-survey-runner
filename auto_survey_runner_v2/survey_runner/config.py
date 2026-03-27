@@ -17,10 +17,11 @@ REQUIRED_KEYS = [
     "paths.knowledge_dir",
     "paths.output_dir",
     "paths.local_docs_dir",
-    "ollama.base_url",
-    "ollama.planner_model",
-    "ollama.extractor_model",
-    "ollama.synthesizer_model",
+    "llm.provider",
+    "llm.model_map.planner",
+    "llm.model_map.extractor",
+    "llm.model_map.synthesizer",
+    "llm.timeout_seconds",
     "runtime.max_steps_per_run",
     "runtime.max_retry_per_task",
     "runtime.max_tasks",
@@ -31,9 +32,9 @@ REQUIRED_KEYS = [
     "collection.max_sources_per_task",
     "collection.chunk_size",
     "collection.chunk_overlap",
-    "models.planner_temperature",
-    "models.extractor_temperature",
-    "models.synthesizer_temperature",
+    "llm.temperature.planner",
+    "llm.temperature.extractor",
+    "llm.temperature.synthesizer",
     "quality.claim_confidence_threshold",
     "quality.spawn_confidence_threshold",
 ]
@@ -49,17 +50,18 @@ NUMERIC_KEYS = [
     "collection.max_sources_per_task",
     "collection.chunk_size",
     "collection.chunk_overlap",
-    "models.planner_temperature",
-    "models.extractor_temperature",
-    "models.synthesizer_temperature",
+    "llm.timeout_seconds",
+    "llm.temperature.planner",
+    "llm.temperature.extractor",
+    "llm.temperature.synthesizer",
     "quality.claim_confidence_threshold",
     "quality.spawn_confidence_threshold",
 ]
 
 ZERO_ONE_KEYS = [
-    "models.planner_temperature",
-    "models.extractor_temperature",
-    "models.synthesizer_temperature",
+    "llm.temperature.planner",
+    "llm.temperature.extractor",
+    "llm.temperature.synthesizer",
     "quality.claim_confidence_threshold",
     "quality.spawn_confidence_threshold",
     "runtime.min_priority",
@@ -148,6 +150,9 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     chunk_overlap = int(_get(config, "collection.chunk_overlap"))
     if chunk_overlap >= chunk_size:
         raise ValueError("collection.chunk_overlap must be smaller than collection.chunk_size")
+    provider = str(_get(config, "llm.provider")).strip().lower()
+    if provider != "litellm":
+        raise ValueError("llm.provider must be 'litellm'")
 
     return config
 

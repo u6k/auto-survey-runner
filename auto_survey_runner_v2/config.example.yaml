@@ -6,11 +6,16 @@ paths:
   knowledge_dir: "./knowledge"
   output_dir: "./outputs"
   local_docs_dir: "./local_docs"
-ollama:
-  base_url: "http://localhost:11434"
-  planner_model: "planner"
-  extractor_model: "extractor"
-  synthesizer_model: "synthesizer"
+llm:
+  provider: "litellm"
+  model_map:
+    planner: "openai/gpt-4o-mini"
+    extractor: "openai/gpt-4o-mini"
+    synthesizer: "openai/gpt-4o"
+  temperature:
+    planner: 0.2
+    extractor: 0.0
+    synthesizer: 0.3
   timeout_seconds: 1800
   extractor_disable_thinking: true
 runtime:
@@ -25,10 +30,6 @@ collection:
   max_sources_per_task: 8
   chunk_size: 1500
   chunk_overlap: 200
-models:
-  planner_temperature: 0.2
-  extractor_temperature: 0.0
-  synthesizer_temperature: 0.3
 quality:
   claim_confidence_threshold: 0.5
   spawn_confidence_threshold: 0.6
